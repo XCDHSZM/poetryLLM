@@ -3,9 +3,7 @@ import json
 import os
 import random
 import sys
-# ==========================================
-# 核心修复：把项目根目录临时加入系统环境路径
-# ==========================================
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.append(project_root)
