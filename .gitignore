@@ -1,0 +1,12 @@
+# 数据集 (忽略原始和处理后的庞大文件)
+data/raw/
+data/processed/
+# 模型权重 (绝对不能上传)
+models/pretrained/
+models/checkpoints/
+# Python 缓存和环境
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.env
