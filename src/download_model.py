@@ -13,7 +13,9 @@ def download_qwen_model():
     os.makedirs(model_dir, exist_ok=True)
     
     # 🔴 升级为 30亿 参数的 Qwen2.5-3B-Instruct
-    model_id = 'qwen/Qwen2.5-3B-Instruct'
+    model_id = 'qwen/Qwen1.5-0.5B-Chat'
+    # 
+    # qwen/Qwen2.5-3B-Instruct
     
     print(f"🚀 开始从 ModelScope 下载大模型 {model_id}...")
     print(f"📂 模型将保存在: {model_dir}")
