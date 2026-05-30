@@ -13,7 +13,7 @@ def download_qwen_model():
     os.makedirs(model_dir, exist_ok=True)
     
     # 🔴 升级为 30亿 参数的 Qwen2.5-3B-Instruct
-    model_id = 'qwen/Qwen1.5-0.5B-Chat'
+    model_id = 'qwen/Qwen2.5-3B-Instruct'
     # 
     # qwen/Qwen2.5-3B-Instruct
     
