@@ -7,3 +7,4 @@ modelscope>=1.36.0
 nltk>=3.8.1
 rouge-score>=0.1.2
 openai>=1.12.0
+pypinyin>=0.55.0
