@@ -1,7 +1,9 @@
 import os
 import sys
 import glob
+import json
 import torch
+from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
@@ -17,20 +19,23 @@ def get_latest_checkpoint(checkpoint_dir):
     checkpoints = glob.glob(os.path.join(checkpoint_dir, "checkpoint-*"))
     if not checkpoints:
         raise FileNotFoundError(f"❌ 在 {checkpoint_dir} 下没有找到任何 checkpoint 文件夹！请先进行训练。")
-    
-    # 按照 checkpoint 后面的数字大小进行排序，取最大的（即最新的）
     checkpoints.sort(key=lambda x: int(x.split("-")[-1]))
     return checkpoints[-1]
 
 def main():
     root_dir = get_project_root()
     
-    # 🔴 1. 更新基础模型路径为 3B 模型
+    # 路径配置
     base_model_dir = os.path.join(root_dir, "models", "pretrained", "qwen", "Qwen2.5-3B-Instruct")
-    
-    # 🔴 2. 动态获取最新的 LoRA 权重路径
     checkpoint_base_dir = os.path.join(root_dir, "models", "checkpoints")
     lora_dir = get_latest_checkpoint(checkpoint_base_dir)
+    
+    # 数据集路径配置
+    val_data_path = os.path.join(root_dir, "data", "processed", "tang_val.jsonl")
+    output_results_path = os.path.join(root_dir, "data", "processed", "eval_results.jsonl")
+
+    if not os.path.exists(val_data_path):
+        raise FileNotFoundError(f"❌ 找不到验证集文件：{val_data_path}")
 
     print("1. 正在加载 Tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(base_model_dir, trust_remote_code=True)
@@ -38,7 +43,6 @@ def main():
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     print("2. 正在加载基础模型 (GPU 模式 & FP16 半精度)...")
-    # 🔴 3. 将 device_map 改为 auto（使用 GPU），并将精度改为 float16 以匹配训练状态
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_dir,
         device_map="auto",
@@ -47,52 +51,68 @@ def main():
     )
 
     print(f"3. 正在将最新的 LoRA 权重挂载到基础模型上...\n   挂载路径: {lora_dir}")
-    # 核心步骤：把基础模型和 LoRA 权重合并在一起
     model = PeftModel.from_pretrained(base_model, lora_dir)
-    model.eval() # 切换到评估/推理模式
+    model.eval()
 
     print("\n" + "="*50)
-    print("🤖 诗词大模型加载完毕，请出题！")
+    print("🤖 模型加载完毕，开始批量生成评估数据！")
     print("="*50 + "\n")
 
-    # 4. 准备测试题目
-    test_instruction = "请续写这首唐诗：湖光秋月两相和，"
-    
-    messages = [
-        {"role": "system", "content": "你是一个精通中国古典诗词的AI诗人。"},
-        {"role": "user", "content": test_instruction}
-    ]
-    
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True 
-    )
-    
-    # 🔴 4. 将输入数据也推送到模型所在的设备（GPU）上
-    model_inputs = tokenizer([text], return_tensors="pt").to(base_model.device)
+    # 读取验证集数据
+    with open(val_data_path, 'r', encoding='utf-8') as f:
+        val_records = [json.loads(line.strip()) for line in f]
 
-    print(f"【输入提示】 {test_instruction}\n")
-    print("【模型生成中，请稍候...】")
+    print(f"📦 共读取到 {len(val_records)} 条验证数据，准备开始推理...")
 
-    # 5. 执行生成
-    with torch.no_grad():
-        generated_ids = model.generate(
-            model_inputs.input_ids,
-            attention_mask=model_inputs.attention_mask,
-            max_new_tokens=50,
-            temperature=0.7,         
-            top_p=0.9,               
-            repetition_penalty=1.1,  
-        )
+    # 打开输出文件准备写入
+    with open(output_results_path, 'w', encoding='utf-8') as outfile:
+        # 使用 tqdm 包装循环，显示进度条
+        for record in tqdm(val_records, desc="批量推理进度"):
+            instruction = record["instruction"]
+            target = record["output"] # 原数据集里的 output 就是 Ground Truth
+            
+            messages = [
+                {"role": "system", "content": "你是一个精通中国古典诗词的AI诗人。"},
+                {"role": "user", "content": instruction}
+            ]
+            
+            text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True 
+            )
+            
+            model_inputs = tokenizer([text], return_tensors="pt").to(base_model.device)
 
-    # 6. 解码输出
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            # 执行生成
+            with torch.no_grad():
+                generated_ids = model.generate(
+                    model_inputs.input_ids,
+                    attention_mask=model_inputs.attention_mask,
+                    max_new_tokens=50,
+                    temperature=0.7,         
+                    top_p=0.9,               
+                    repetition_penalty=1.1,  
+                )
 
-    print(f"【AI 续写】 {response}\n")
+            # 解码输出
+            generated_ids = [
+                output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+            ]
+            response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            
+            # 组装用于评估的 JSON 格式
+            result_record = {
+                "instruction": instruction,
+                "target": target,
+                "generated": response
+            }
+            
+            # 写入文件
+            outfile.write(json.dumps(result_record, ensure_ascii=False) + "\n")
+
+    print(f"\n✅ 批量推理完成！结果已保存至：{output_results_path}")
+    print("💡 接下来，你可以运行 src/evaluate/run_eval.py 来生成最终的量化评估报告了！")
 
 if __name__ == "__main__":
     main()
