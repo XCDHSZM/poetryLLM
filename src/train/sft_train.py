@@ -43,7 +43,7 @@ def main():
     root_dir = get_project_root()
     
     # 🔴 路径更新：指向你刚下载的 3B 大模型和昨天切分好的全量训练集
-    model_dir = os.path.join(root_dir, "models", "pretrained", "qwen", "Qwen2.5-3B-Instruct") 
+    model_dir = os.path.join(root_dir, "models", "pretrained", "qwen", "Qwen1___5-0___5B-Chat") 
     data_path = os.path.join(root_dir, "data", "processed", "tang_train.jsonl")
     output_dir = os.path.join(root_dir, "models", "checkpoints")
 
