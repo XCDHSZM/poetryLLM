@@ -1,5 +1,9 @@
 import os
 from modelscope.hub.snapshot_download import snapshot_download
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.append(project_root)
 from src.utils.tools import get_project_root
 def download_qwen_model():
     root_dir = get_project_root()
