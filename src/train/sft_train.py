@@ -11,7 +11,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, TaskType
 
-# 为了能顺利导入 src.utils.tools，将项目根目录临时加入系统路径
+# 临时将项目根目录加入系统路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.append(project_root)
@@ -19,13 +19,12 @@ sys.path.append(project_root)
 from src.utils.tools import get_project_root
 
 def prepare_dataset(tokenizer, data_path, max_length=128):
-    """加载并处理数据集"""
+    """加载并处理完整训练集"""
     # 加载 JSONL 数据
     dataset = load_dataset('json', data_files=data_path, split='train')
     
-    # 🔴 CPU 调试特供：为了快速验证，我们只取前 50 条数据
-    print("⚠️ 检测到测试模式：截取前 50 条数据进行快速验证...")
-    dataset = dataset.select(range(50))
+    # 🔴 封印解除：移除了 dataset.select(range(50))，现在使用全量数据！
+    print(f"📦 成功加载训练集，共 {len(dataset)} 条数据。")
     
     def tokenize_function(example):
         messages = [
@@ -33,13 +32,8 @@ def prepare_dataset(tokenizer, data_path, max_length=128):
             {"role": "user", "content": example["instruction"]},
             {"role": "assistant", "content": example["output"]}
         ]
-        # 使用 Qwen 的对话模板
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-        
-        # 转换为 Token IDs
         model_inputs = tokenizer(text, max_length=max_length, truncation=True, padding="max_length")
-        
-        # Causal LM 任务中，labels 与 input_ids 一致，模型内部会自动做 shift 操作
         model_inputs["labels"] = model_inputs["input_ids"].copy()
         return model_inputs
 
@@ -48,53 +42,61 @@ def prepare_dataset(tokenizer, data_path, max_length=128):
 
 def main():
     root_dir = get_project_root()
-    model_dir = os.path.join(root_dir, "models", "pretrained", "qwen", "Qwen1.5-0.5B-Chat") 
-    data_path = os.path.join(root_dir, "data", "processed", "tang_qwen_sft.jsonl")
+    
+    # 🔴 路径更新：指向你刚下载的 3B 大模型和昨天切分好的全量训练集
+    model_dir = os.path.join(root_dir, "models", "pretrained", "qwen", "Qwen2.5-3B-Instruct") 
+    data_path = os.path.join(root_dir, "data", "processed", "tang_train.jsonl")
     output_dir = os.path.join(root_dir, "models", "checkpoints")
+
+    if not os.path.exists(model_dir):
+        raise FileNotFoundError(f"❌ 找不到模型文件夹：{model_dir}。请检查下载脚本是否运行成功。")
 
     print("1. 正在加载 Tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    # Qwen 的 pad_token 默认可能为空，需要设置一下以支持 batch 处理
-    tokenizer.pad_token_id = tokenizer.eod_id
+    # 修复之前的 pad_token 报错
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
     print("2. 正在准备数据集...")
     train_dataset = prepare_dataset(tokenizer, data_path)
 
-    print("3. 正在加载基础模型 (CPU 模式)...")
-    # 🔴 CPU 调试特供：指定 device_map="cpu"，不使用任何量化或半精度
+    print("3. 正在加载基础模型 (双卡并行 & FP16 半精度加速)...")
+    # 🔴 核心显卡配置：device_map="auto" 会自动把模型切分到两张 T4 显卡上
+    # 🔴 torch_dtype=torch.float16：T4 显卡对 FP16 有硬件级加速，能省一半显存并大幅提速
     model = AutoModelForCausalLM.from_pretrained(
         model_dir,
-        device_map="cpu",
-        torch_dtype=torch.float32,
+        device_map="auto",
+        torch_dtype=torch.float16, 
         trust_remote_code=True
     )
     
-    # 禁用缓存以节省内存（训练时必须）
     model.config.use_cache = False
 
     print("4. 配置 LoRA 适配器...")
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], # Qwen 全连接层
-        inference_mode=False, # 训练模式
-        r=8,                  # 秩，越小参数越少
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], 
+        inference_mode=False,
+        r=8,
         lora_alpha=16,
         lora_dropout=0.05
     )
     model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters() # 打印一下看我们冻结了多少参数
+    model.print_trainable_parameters() 
 
-    print("5. 配置训练参数...")
+    print("5. 配置工业级分布式训练参数...")
     training_args = TrainingArguments(
         output_dir=output_dir,
-        use_cpu=True,                   # 🔴 强制使用 CPU
-        per_device_train_batch_size=1,  # CPU 内存有限，Batch Size 设为 1
-        gradient_accumulation_steps=4,  # 模拟更大的 Batch Size (1*4=4)
-        max_steps=10,                   # 🔴 调试特供：只跑 10 步就结束，验证流程通畅
-        logging_steps=1,
-        save_steps=10,
+        fp16=True,                      # 🔴 开启混合精度训练 (极其关键)
+        per_device_train_batch_size=4,  # 每张卡塞 4 条数据 (双卡实际 Batch Size = 8)
+        gradient_accumulation_steps=2,  # 梯度累加，等效总 Batch Size = 16
+        num_train_epochs=3,             # 🔴 完整遍历所有唐诗 3 遍
         learning_rate=3e-4,
+        logging_steps=50,               # 每 50 步打印一次 Loss 观察是否收敛
+        save_strategy="epoch",          # 每个 epoch 结束保存一次模型
+        save_total_limit=2,             # 最多只保留最近的 2 个权重，防止 Kaggle 硬盘撑爆
         remove_unused_columns=False,
+        report_to="none"                # 禁用 wandb 等外部日志上报
     )
 
     trainer = Trainer(
@@ -104,10 +106,10 @@ def main():
         data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, padding=True),
     )
 
-    print("🚀 开始训练...")
+    print("🚀 开始在 GPU 集群上全量训练...")
     trainer.train()
     
-    print(f"✅ 验证成功！LoRA 权重已保存在: {output_dir}")
+    print(f"✅ 训练圆满结束！LoRA 权重已保存在: {output_dir}")
 
 if __name__ == "__main__":
     main()
