@@ -96,36 +96,31 @@ def main():
     print("="*50 + "\n")
 
     # 4. 无限循环，随性测试
-    # while True:
-    #     try:
-    #         # 接收终端输入
-    #         user_input = input("👉 请输入古诗首句 (例如: 孤舟蓑笠翁，): ").strip()
+    while True:
+        try:
+            # 接收终端输入
+            user_input = input("👉 请输入古诗首句 (例如: 孤舟蓑笠翁，): ").strip()
             
-    #         # 退出指令检测
-    #         if user_input.lower() in ['quit', 'exit']:
-    #             print("👋 期待与您下次品茗论诗！")
-    #             break
+            # 退出指令检测
+            if user_input.lower() in ['quit', 'exit']:
+                print("👋 期待与您下次品茗论诗！")
+                break
                 
-    #         if not user_input:
-    #             continue
+            if not user_input:
+                continue
 
-    #         print("📝 模型构思中...\n")
+            print("📝 模型构思中...\n")
             
-    #         # 调用生成函数
-    #         result = generate_poem(user_input, model, tokenizer)
+            # 调用生成函数
+            result = generate_poem(user_input, model, tokenizer)
             
-    #         print(f"【AI 续写】\n{result}\n")
-    #         print("-" * 50)
+            print(f"【AI 续写】\n{result}\n")
+            print("-" * 50)
             
-    #     except KeyboardInterrupt:
-    #         # 捕获 Ctrl+C，优雅退出
-    #         print("\n👋 已强制退出。")
-    #         break
-    print("测试古诗“孤舟蓑笠翁”")
-    user_input = "孤舟蓑笠翁"
-    print("📝 模型构思中...\n")
-    result = generate_poem(user_input, model, tokenizer)
-    print(f"【AI 续写】\n{result}\n")
+        except KeyboardInterrupt:
+            # 捕获 Ctrl+C，优雅退出
+            print("\n👋 已强制退出。")
+            break
 
 if __name__ == "__main__":
     main()
