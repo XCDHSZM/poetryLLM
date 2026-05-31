@@ -39,3 +39,15 @@ Poetry_LLM_Project/
 ├── requirements.txt         # 核心环境依赖
 ├── .gitignore               # Git 忽略配置
 └── README.md                # 项目文档
+
+
+##  使用说明 
+
+git clone https://github.com/XCDHSZM/poetryLLM.git # 克隆项目
+cd poetryLLM # 进入项目目录
+pip install -r requirements.txt # 安装依赖
+python src/data_process/make_dataset.py # 数据清洗与格式转换
+python src/download_model.py # 下载预训练大模型
+python src/inference/generate.py #加载训好的 LoRA 权重,对验证集中的 1000 首未知唐诗进行首句续写
+python src/evaluate/run_eval.py #综合评估
+
